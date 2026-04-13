@@ -4,11 +4,25 @@ const { getPool, query, sql } = require('../config/database');
 async function getAll(req, res) {
   try {
     let result;
-    if (req.user.role === 'admin' || req.user.role === 'vendor') {
+    if (req.user.role === 'admin') {
       result = await query(
         `SELECT o.*, CONCAT(u.first_name, ' ', u.last_name) AS client_name, u.email
          FROM orders o JOIN users u ON o.user_id = u.id
          ORDER BY o.created_at DESC`
+      );
+    } else if (req.user.role === 'vendor') {
+      // Seulement les commandes contenant les produits de ce vendeur
+      result = await query(
+        `SELECT DISTINCT o.id, o.user_id, o.total_amount, o.status,
+                o.shipping_address, o.notes, o.created_at, o.updated_at,
+                CONCAT(u.first_name, ' ', u.last_name) AS client_name, u.email
+         FROM orders o
+         JOIN users u ON o.user_id = u.id
+         JOIN order_items oi ON oi.order_id = o.id
+         JOIN products p ON p.id = oi.product_id
+         WHERE p.vendor_id = @vendorId
+         ORDER BY o.created_at DESC`,
+        { vendorId: req.user.id }
       );
     } else {
       result = await query(
@@ -18,6 +32,7 @@ async function getAll(req, res) {
     }
     res.json(result.recordset);
   } catch (err) {
+    console.error('getAll orders:', err);
     res.status(500).json({ message: 'Erreur serveur.' });
   }
 }

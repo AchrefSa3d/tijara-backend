@@ -9,6 +9,7 @@ const {
   getAllProducts,
   getAllAnnonces, approveAnnonce, rejectAnnonce,
   getPendingProducts, approveProduct, rejectProduct,
+  getVendorDetails, getUserDetails,
 } = require('../controllers/adminController');
 
 // Toutes les routes admin nécessitent d'être authentifié + rôle admin
@@ -16,8 +17,10 @@ router.use(authenticate, authorize('admin'));
 
 router.get('/stats',                      getStats);
 router.get('/users',                      getAllUsers);
+router.get('/users/:id',                  getUserDetails);
 router.get('/vendors',                    getAllVendors);
 router.get('/vendors/pending',            getPendingVendors);
+router.get('/vendors/:id',               getVendorDetails);
 router.patch('/vendors/:id/approve',      approveVendor);
 router.patch('/vendors/:id/reject',       rejectVendor);
 

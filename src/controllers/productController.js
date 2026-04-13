@@ -24,7 +24,10 @@ async function getAll(req, res) {
   try {
     const result = await query(
       `SELECT p.*, c.name AS category_name, c.slug AS category_slug,
-              CONCAT(u.first_name, ' ', u.last_name) AS vendor_name
+              CONCAT(u.first_name, ' ', u.last_name) AS vendor_name,
+              u.shop_name,
+              (SELECT AVG(CAST(r.rating AS FLOAT)) FROM reviews r WHERE r.product_id = p.id) AS avg_rating,
+              (SELECT COUNT(*) FROM reviews r WHERE r.product_id = p.id) AS review_count
        FROM products p
        LEFT JOIN categories c ON p.category_id = c.id
        LEFT JOIN users u ON p.vendor_id = u.id
@@ -181,4 +184,36 @@ async function getMyProducts(req, res) {
   }
 }
 
-module.exports = { getAll, getOne, create, update, remove, getMyProducts };
+// ─── GET /api/products/vendor/:vendorId  (public vendor profile) ─
+async function getVendorProfile(req, res) {
+  const vendorId = parseInt(req.params.vendorId);
+  try {
+    const vendor = await query(
+      `SELECT id, first_name, last_name, email, phone, city,
+              shop_name, company_number, is_approved, created_at
+       FROM users WHERE id = @vendorId AND role = 'vendor' AND is_active = 1`,
+      { vendorId }
+    );
+    if (!vendor.recordset.length)
+      return res.status(404).json({ message: 'Vendeur introuvable.' });
+
+    const products = await query(
+      `SELECT p.id, p.name, p.price, p.stock, p.image_url, p.created_at,
+              c.name AS category_name,
+              (SELECT AVG(CAST(r.rating AS FLOAT)) FROM reviews r WHERE r.product_id = p.id) AS avg_rating,
+              (SELECT COUNT(*) FROM reviews r WHERE r.product_id = p.id) AS review_count
+       FROM products p
+       LEFT JOIN categories c ON p.category_id = c.id
+       WHERE p.vendor_id = @vendorId AND p.is_active = 1 AND p.approval_status = 'approved'
+       ORDER BY p.created_at DESC`,
+      { vendorId }
+    );
+
+    res.json({ vendor: vendor.recordset[0], products: products.recordset });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Erreur serveur.' });
+  }
+}
+
+module.exports = { getAll, getOne, create, update, remove, getMyProducts, getVendorProfile };

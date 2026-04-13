@@ -18,9 +18,21 @@ async function getPendingVendors(req, res) {
 async function getAllVendors(req, res) {
   try {
     const result = await query(
-      `SELECT id, email, first_name, last_name, phone, city, is_approved, rejection_reason, created_at
-       FROM users WHERE role = 'vendor' AND is_active = 1
-       ORDER BY created_at DESC`
+      `SELECT u.id, u.email, u.first_name, u.last_name, u.phone, u.city,
+              u.shop_name, u.company_number, u.is_approved, u.is_active,
+              u.rejection_reason, u.created_at,
+              COUNT(DISTINCT p.id) AS product_count,
+              COUNT(DISTINCT o.id) AS order_count,
+              ISNULL(SUM(oi.quantity * oi.unit_price), 0) AS revenue
+       FROM users u
+       LEFT JOIN products p ON p.vendor_id = u.id AND p.is_active = 1
+       LEFT JOIN order_items oi ON oi.product_id = p.id
+       LEFT JOIN orders o ON o.id = oi.order_id
+       WHERE u.role = 'vendor'
+       GROUP BY u.id, u.email, u.first_name, u.last_name, u.phone, u.city,
+                u.shop_name, u.company_number, u.is_approved, u.is_active,
+                u.rejection_reason, u.created_at
+       ORDER BY u.created_at DESC`
     );
     res.json(result.recordset);
   } catch (err) {
@@ -84,9 +96,25 @@ async function getStats(req, res) {
     const pending        = await query("SELECT COUNT(*) AS total FROM users WHERE role='vendor' AND is_approved=0 AND is_active=1");
     const products       = await query("SELECT COUNT(*) AS total FROM products WHERE is_active=1");
     const orders         = await query("SELECT COUNT(*) AS total FROM orders");
+    const revenue        = await query("SELECT ISNULL(SUM(total_amount),0) AS total FROM orders WHERE status != 'cancelled'");
     const reclamations   = await query("SELECT COUNT(*) AS total FROM reclamations WHERE status='open'");
     const pendingAnn     = await query("SELECT COUNT(*) AS total FROM annonces WHERE status='pending'");
     const pendingProd    = await query("SELECT COUNT(*) AS total FROM products WHERE approval_status='pending'");
+    const ordersByStatus = await query(`
+      SELECT status, COUNT(*) AS cnt FROM orders GROUP BY status
+    `);
+    const ordersByMonth  = await query(`
+      SELECT MONTH(created_at) AS m, COUNT(*) AS cnt
+      FROM orders
+      WHERE YEAR(created_at) = YEAR(GETDATE())
+      GROUP BY MONTH(created_at)
+    `);
+
+    const monthArr = Array(12).fill(0);
+    ordersByMonth.recordset.forEach(r => { monthArr[r.m - 1] = r.cnt; });
+
+    const statusMap = {};
+    ordersByStatus.recordset.forEach(r => { statusMap[r.status] = r.cnt; });
 
     res.json({
       users:            users.recordset[0].total,
@@ -94,9 +122,12 @@ async function getStats(req, res) {
       pendingVendors:   pending.recordset[0].total,
       products:         products.recordset[0].total,
       orders:           orders.recordset[0].total,
+      revenue:          revenue.recordset[0].total,
       openReclamations: reclamations.recordset[0].total,
       pendingAnnonces:  pendingAnn.recordset[0].total,
       pendingProducts:  pendingProd.recordset[0].total,
+      ordersByMonth:    monthArr,
+      ordersByStatus:   statusMap,
     });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur.' });
@@ -268,10 +299,95 @@ async function rejectProduct(req, res) {
   }
 }
 
+// ─── GET /api/admin/vendors/:id ───────────────────────────────
+async function getVendorDetails(req, res) {
+  const id = parseInt(req.params.id);
+  try {
+    const vendorRes = await query(
+      `SELECT id, email, first_name, last_name, phone, city, shop_name,
+              company_number, is_approved, is_active, created_at
+       FROM users WHERE id = @id AND role = 'vendor'`,
+      { id }
+    );
+    if (!vendorRes.recordset.length)
+      return res.status(404).json({ message: 'Vendeur introuvable.' });
+
+    const productsRes = await query(
+      `SELECT p.id, p.name, p.price, p.stock, p.approval_status, p.is_active,
+              p.image_url, p.created_at,
+              c.name AS category_name,
+              (SELECT AVG(CAST(r.rating AS FLOAT)) FROM reviews r WHERE r.product_id = p.id) AS avg_rating,
+              (SELECT COUNT(*) FROM reviews r WHERE r.product_id = p.id) AS review_count
+       FROM products p
+       LEFT JOIN categories c ON p.category_id = c.id
+       WHERE p.vendor_id = @id
+       ORDER BY p.created_at DESC`,
+      { id }
+    );
+
+    const statsRes = await query(
+      `SELECT
+         COUNT(p.id) AS total_products,
+         SUM(CASE WHEN p.is_active=1 AND p.approval_status='approved' THEN 1 ELSE 0 END) AS active_products,
+         (SELECT COUNT(r.id) FROM reviews r JOIN products pp ON r.product_id = pp.id WHERE pp.vendor_id = @id) AS total_reviews,
+         (SELECT AVG(CAST(r.rating AS FLOAT)) FROM reviews r JOIN products pp ON r.product_id = pp.id WHERE pp.vendor_id = @id) AS avg_rating
+       FROM products p WHERE p.vendor_id = @id`,
+      { id }
+    );
+
+    res.json({
+      vendor:   vendorRes.recordset[0],
+      products: productsRes.recordset,
+      stats:    statsRes.recordset[0],
+    });
+  } catch (err) {
+    console.error('getVendorDetails:', err);
+    res.status(500).json({ message: 'Erreur serveur.' });
+  }
+}
+
+// ─── GET /api/admin/users/:id ────────────────────────────────
+async function getUserDetails(req, res) {
+  const id = parseInt(req.params.id);
+  try {
+    const userRes = await query(
+      `SELECT id, email, first_name, last_name, phone, city, role,
+              is_active, created_at
+       FROM users WHERE id = @id`,
+      { id }
+    );
+    if (!userRes.recordset.length)
+      return res.status(404).json({ message: 'Utilisateur introuvable.' });
+
+    const ordersRes = await query(
+      `SELECT id, total_amount, status, shipping_address, notes, created_at
+       FROM orders WHERE user_id = @id ORDER BY created_at DESC`,
+      { id }
+    );
+
+    const statsRes = await query(
+      `SELECT COUNT(*) AS total_orders,
+              ISNULL(SUM(total_amount), 0) AS total_spent
+       FROM orders WHERE user_id = @id`,
+      { id }
+    );
+
+    res.json({
+      user:   userRes.recordset[0],
+      orders: ordersRes.recordset,
+      stats:  statsRes.recordset[0],
+    });
+  } catch (err) {
+    console.error('getUserDetails:', err);
+    res.status(500).json({ message: 'Erreur serveur.' });
+  }
+}
+
 module.exports = {
   getPendingVendors, getAllVendors, approveVendor, rejectVendor, getAllUsers, getStats,
   getAllOrders, updateOrderStatus,
   getAllProducts,
   getAllAnnonces, approveAnnonce, rejectAnnonce,
   getPendingProducts, approveProduct, rejectProduct,
+  getVendorDetails, getUserDetails,
 };

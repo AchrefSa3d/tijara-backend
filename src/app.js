@@ -25,6 +25,7 @@ app.use('/api/reclamations', require('./routes/reclamations'));
 app.use('/api/categories',   require('./routes/categories'));
 app.use('/api/annonces',     require('./routes/annonces'));
 app.use('/api/admin',        require('./routes/admin'));
+app.use('/api/messages',     require('./routes/messages'));
 
 // ─── Health check ────────────────────────────────────────────
 app.get('/api/health', (req, res) => {

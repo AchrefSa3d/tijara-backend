@@ -1,6 +1,9 @@
 const bcrypt = require('bcryptjs');
 const jwt    = require('jsonwebtoken');
+const { OAuth2Client } = require('google-auth-library');
 const { query } = require('../config/database');
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // ─── POST /api/auth/login ─────────────────────────────────────
 async function login(req, res) {
@@ -130,4 +133,76 @@ async function me(req, res) {
   }
 }
 
-module.exports = { login, register, me };
+// ─── POST /api/auth/google ────────────────────────────────────
+async function googleAuth(req, res) {
+  const { credential } = req.body;
+  if (!credential) return res.status(400).json({ message: 'Token Google manquant.' });
+
+  try {
+    // Vérifier le token Google
+    const ticket = await googleClient.verifyIdToken({
+      idToken:  credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    const { email, given_name, family_name, sub: googleId } = payload;
+
+    // Chercher l'utilisateur existant
+    let result = await query(
+      'SELECT * FROM users WHERE email = @email AND is_active = 1',
+      { email: email.toLowerCase() }
+    );
+
+    let user = result.recordset[0];
+
+    if (!user) {
+      // Créer un nouveau compte client, auto-approuvé
+      const insertResult = await query(
+        `INSERT INTO users (email, password_hash, role, first_name, last_name, is_approved)
+         OUTPUT INSERTED.id, INSERTED.email, INSERTED.role, INSERTED.first_name, INSERTED.last_name, INSERTED.is_approved
+         VALUES (@email, @hash, 'user', @firstName, @lastName, 1)`,
+        {
+          email:     email.toLowerCase(),
+          hash:      await bcrypt.hash(googleId + process.env.JWT_SECRET, 10),
+          firstName: given_name  || '',
+          lastName:  family_name || '',
+        }
+      );
+      user = insertResult.recordset[0];
+    }
+
+    // Vendeur en attente : bloquer la connexion Google aussi
+    if (user.role === 'vendor' && !user.is_approved) {
+      return res.status(403).json({
+        message: 'Votre compte vendeur est en attente de validation.',
+        status: 'pending_approval'
+      });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role,
+        firstName: user.first_name, lastName: user.last_name },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+
+    res.json({
+      token,
+      user: {
+        id:         user.id,
+        email:      user.email,
+        role:       user.role,
+        firstName:  user.first_name,
+        lastName:   user.last_name,
+        phone:      user.phone  || null,
+        city:       user.city   || null,
+        isApproved: user.is_approved,
+      }
+    });
+  } catch (err) {
+    console.error('googleAuth:', err);
+    res.status(401).json({ message: 'Token Google invalide ou expiré.' });
+  }
+}
+
+module.exports = { login, register, me, googleAuth };
