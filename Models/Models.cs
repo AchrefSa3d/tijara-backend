@@ -565,6 +565,107 @@ public class ReviewRequest
     public string? Comment { get; set; }
 }
 
+// ─── LOT 3 + 6 ────────────────────────────────────────────────────────────
+public class Permission
+{
+    public int     IdPermission { get; set; }
+    public int     IdRole       { get; set; }
+    public string  Resource     { get; set; } = "";
+    public bool    CanRead      { get; set; }
+    public bool    CanCreate    { get; set; }
+    public bool    CanUpdate    { get; set; }
+    public bool    CanDelete    { get; set; }
+}
+
+public class PaymentRecord
+{
+    public long     IdPayment     { get; set; }
+    public long     IdUser        { get; set; }
+    public long?    IdOrder       { get; set; }
+    public decimal  Amount        { get; set; }
+    public string   Method        { get; set; } = "card";
+    public string   Status        { get; set; } = "pending";
+    public string?  Reference     { get; set; }
+    public string?  TransactionId { get; set; }
+    public DateTime CreatedAt     { get; set; }
+    public DateTime? PaidAt       { get; set; }
+}
+
+public class PaymentRequest
+{
+    public long?    IdOrder { get; set; }
+    public decimal  Amount  { get; set; }
+    public string   Method  { get; set; } = "card";
+    public string?  CardNumber { get; set; }
+    public string?  CardHolder { get; set; }
+}
+
+public class Transport
+{
+    public int      IdTransport { get; set; }
+    public string   Name        { get; set; } = "";
+    public string?  Logo        { get; set; }
+    public string?  Phone       { get; set; }
+    public string?  Email       { get; set; }
+    public decimal  DeliveryFee { get; set; }
+    public decimal? FreeFrom    { get; set; }
+    public string?  Zones       { get; set; }
+    public bool     Active      { get; set; } = true;
+    public DateTime CreatedAt   { get; set; }
+}
+
+public class Delivery
+{
+    public long     IdDelivery     { get; set; }
+    public long     IdOrder        { get; set; }
+    public int?     IdTransport    { get; set; }
+    public string?  TrackingNumber { get; set; }
+    public string   Status         { get; set; } = "pending";
+    public string?  AddressLine    { get; set; }
+    public string?  City           { get; set; }
+    public string?  PostalCode     { get; set; }
+    public string?  Phone          { get; set; }
+    public decimal  DeliveryFee    { get; set; }
+    public DateTime? EstimatedAt   { get; set; }
+    public DateTime? DeliveredAt   { get; set; }
+    public string?  Note           { get; set; }
+    public DateTime CreatedAt      { get; set; }
+    public DateTime UpdatedAt      { get; set; }
+}
+
+public class Invoice
+{
+    public long     IdInvoice   { get; set; }
+    public string   Number      { get; set; } = "";
+    public long     IdOrder     { get; set; }
+    public long     IdUser      { get; set; }
+    public long?    IdVendor    { get; set; }
+    public decimal  Subtotal    { get; set; }
+    public decimal  Tax         { get; set; }
+    public decimal  DeliveryFee { get; set; }
+    public decimal  Total       { get; set; }
+    public string   Status      { get; set; } = "issued";
+    public DateTime IssuedAt    { get; set; }
+    public DateTime? PaidAt     { get; set; }
+}
+
+public class SmsLog
+{
+    public long     IdSms     { get; set; }
+    public string   Recipient { get; set; } = "";
+    public string   Message   { get; set; } = "";
+    public string   Status    { get; set; } = "queued";
+    public string?  Provider  { get; set; }
+    public DateTime SentAt    { get; set; }
+    public string?  Error     { get; set; }
+}
+
+public class SmsRequest
+{
+    public string Recipient { get; set; } = "";
+    public string Message   { get; set; } = "";
+}
+
 public class BoostPack
 {
     public long     IdBoost     { get; set; }

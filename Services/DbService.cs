@@ -362,25 +362,241 @@ public class DbService
             );
         ");
 
-        // Seed minimal defaults
+        // ─── LOT 3 + 6 ────────────────────────────────────────────────────
         await conn.ExecuteAsync(@"
-            IF NOT EXISTS (SELECT 1 FROM Countries WHERE Code='TN')
-                INSERT INTO Countries (Title, Flag, Code, PhoneCode) VALUES
-                    ('Tunisie', '🇹🇳', 'TN', '+216'),
-                    ('France',  '🇫🇷', 'FR', '+33'),
-                    ('Maroc',   '🇲🇦', 'MA', '+212'),
-                    ('Algérie', '🇩🇿', 'DZ', '+213');
-            IF NOT EXISTS (SELECT 1 FROM Causes WHERE Title='Litige commande')
-                INSERT INTO Causes (Title, Description, Type) VALUES
-                    ('Litige commande',  'Problème avec une commande ou livraison', 'order'),
-                    ('Produit défectueux','Article reçu endommagé ou non conforme', 'product'),
-                    ('Vendeur injoignable','Vendeur ne répond pas', 'vendor'),
-                    ('Autre',            'Autre type de réclamation', 'other');
+            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Permissions' AND xtype='U')
+            CREATE TABLE Permissions (
+                IdPermission INT IDENTITY(1,1) PRIMARY KEY,
+                IdRole       INT           NOT NULL,
+                Resource     NVARCHAR(100) NOT NULL,
+                CanRead      BIT DEFAULT 1,
+                CanCreate    BIT DEFAULT 0,
+                CanUpdate    BIT DEFAULT 0,
+                CanDelete    BIT DEFAULT 0,
+                CONSTRAINT UQ_Permissions UNIQUE (IdRole, Resource)
+            );
+
+            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Payments' AND xtype='U')
+            CREATE TABLE Payments (
+                IdPayment    BIGINT IDENTITY(1,1) PRIMARY KEY,
+                IdUser       BIGINT NOT NULL,
+                IdOrder      BIGINT NULL,
+                Amount       DECIMAL(18,3) NOT NULL,
+                Method       NVARCHAR(40)  NOT NULL,
+                Status       NVARCHAR(30)  NOT NULL DEFAULT 'pending',
+                Reference    NVARCHAR(100) NULL,
+                TransactionId NVARCHAR(150) NULL,
+                CreatedAt    DATETIME DEFAULT GETDATE(),
+                PaidAt       DATETIME NULL
+            );
+
+            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Transports' AND xtype='U')
+            CREATE TABLE Transports (
+                IdTransport  INT IDENTITY(1,1) PRIMARY KEY,
+                Name         NVARCHAR(150) NOT NULL,
+                Logo         NVARCHAR(500) NULL,
+                Phone        NVARCHAR(40)  NULL,
+                Email        NVARCHAR(200) NULL,
+                DeliveryFee  DECIMAL(18,3) DEFAULT 0,
+                FreeFrom     DECIMAL(18,3) NULL,
+                Zones        NVARCHAR(500) NULL,
+                Active       BIT DEFAULT 1,
+                CreatedAt    DATETIME DEFAULT GETDATE()
+            );
+
+            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Deliveries' AND xtype='U')
+            CREATE TABLE Deliveries (
+                IdDelivery   BIGINT IDENTITY(1,1) PRIMARY KEY,
+                IdOrder      BIGINT NOT NULL,
+                IdTransport  INT NULL,
+                TrackingNumber NVARCHAR(100) NULL,
+                Status       NVARCHAR(30) NOT NULL DEFAULT 'pending',
+                AddressLine  NVARCHAR(500) NULL,
+                City         NVARCHAR(150) NULL,
+                PostalCode   NVARCHAR(20)  NULL,
+                Phone        NVARCHAR(40)  NULL,
+                DeliveryFee  DECIMAL(18,3) DEFAULT 0,
+                EstimatedAt  DATETIME NULL,
+                DeliveredAt  DATETIME NULL,
+                Note         NVARCHAR(500) NULL,
+                CreatedAt    DATETIME DEFAULT GETDATE(),
+                UpdatedAt    DATETIME DEFAULT GETDATE()
+            );
+
+            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Invoices' AND xtype='U')
+            CREATE TABLE Invoices (
+                IdInvoice    BIGINT IDENTITY(1,1) PRIMARY KEY,
+                Number       NVARCHAR(50) NOT NULL UNIQUE,
+                IdOrder      BIGINT NOT NULL,
+                IdUser       BIGINT NOT NULL,
+                IdVendor     BIGINT NULL,
+                Subtotal     DECIMAL(18,3) NOT NULL,
+                Tax          DECIMAL(18,3) DEFAULT 0,
+                DeliveryFee  DECIMAL(18,3) DEFAULT 0,
+                Total        DECIMAL(18,3) NOT NULL,
+                Status       NVARCHAR(30) DEFAULT 'issued',
+                IssuedAt     DATETIME DEFAULT GETDATE(),
+                PaidAt       DATETIME NULL
+            );
+
+            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='SmsLogs' AND xtype='U')
+            CREATE TABLE SmsLogs (
+                IdSms       BIGINT IDENTITY(1,1) PRIMARY KEY,
+                Recipient   NVARCHAR(40) NOT NULL,
+                Message     NVARCHAR(500) NOT NULL,
+                Status      NVARCHAR(30) DEFAULT 'queued',
+                Provider    NVARCHAR(50) NULL,
+                SentAt      DATETIME DEFAULT GETDATE(),
+                Error       NVARCHAR(500) NULL
+            );
         ");
+
+        // ──────────────────────────────────────────────────────────────
+        // Migration données: corrige les annonces sans prix + recalcule
+        // les factures déjà émises à 0 TND. Idempotente.
+        // ──────────────────────────────────────────────────────────────
+        try
+        {
+            await conn.ExecuteAsync(@"
+                -- 1) Normalise PriceDeal: virgule → point, trim
+                UPDATE Deals
+                   SET PriceDeal = LTRIM(RTRIM(REPLACE(PriceDeal, ',', '.')))
+                 WHERE PriceDeal LIKE '%,%' OR PriceDeal LIKE ' %' OR PriceDeal LIKE '% ';
+
+                -- 2) Affecte un prix aléatoire 50-500 TND aux annonces sans prix
+                UPDATE Deals
+                   SET PriceDeal = CAST(50 + ABS(CHECKSUM(NEWID())) % 451 AS NVARCHAR(50)) + '.000'
+                 WHERE PriceDeal IS NULL
+                    OR LTRIM(RTRIM(PriceDeal)) = ''
+                    OR TRY_CAST(PriceDeal AS DECIMAL(18,3)) IS NULL;
+
+                -- 3) Recalcule les factures à 0 TND (héritage du bug PriceDeal vide)
+                IF OBJECT_ID('Invoices','U') IS NOT NULL
+                BEGIN
+                    UPDATE i
+                       SET i.Subtotal    = ISNULL(TRY_CAST(d.PriceDeal AS DECIMAL(18,3)), 0),
+                           i.Tax         = ROUND(ISNULL(TRY_CAST(d.PriceDeal AS DECIMAL(18,3)), 0) * 0.07, 3),
+                           i.Total       = ISNULL(TRY_CAST(d.PriceDeal AS DECIMAL(18,3)), 0)
+                                         + ROUND(ISNULL(TRY_CAST(d.PriceDeal AS DECIMAL(18,3)), 0) * 0.07, 3)
+                      FROM Invoices i
+                      JOIN Orders   o ON i.IdOrder = o.IdOrder
+                      JOIN Deals    d ON o.IdDeal  = d.IdDeal
+                     WHERE i.Total = 0
+                       AND TRY_CAST(d.PriceDeal AS DECIMAL(18,3)) > 0;
+                END
+
+                -- 4) Renseigne IdVendor des factures où il manque
+                IF OBJECT_ID('Invoices','U') IS NOT NULL
+                BEGIN
+                    UPDATE i
+                       SET i.IdVendor = d.idUser
+                      FROM Invoices i
+                      JOIN Orders   o ON i.IdOrder = o.IdOrder
+                      JOIN Deals    d ON o.IdDeal  = d.IdDeal
+                     WHERE i.IdVendor IS NULL
+                       AND d.idUser   IS NOT NULL;
+                END
+            ");
+            Console.WriteLine("[Migration] Données Deals/Invoices normalisées.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[Migration] Avertissement: " + ex.Message);
+        }
+
+        // Migrate Permissions table — add missing columns if the table exists with an older schema
+        try
+        {
+            await conn.ExecuteAsync(@"
+                IF OBJECT_ID('Permissions','U') IS NOT NULL
+                BEGIN
+                    IF COL_LENGTH('Permissions','Resource')  IS NULL ALTER TABLE Permissions ADD Resource  NVARCHAR(100) NULL;
+                    IF COL_LENGTH('Permissions','CanRead')   IS NULL ALTER TABLE Permissions ADD CanRead   BIT DEFAULT 0;
+                    IF COL_LENGTH('Permissions','CanCreate') IS NULL ALTER TABLE Permissions ADD CanCreate BIT DEFAULT 0;
+                    IF COL_LENGTH('Permissions','CanUpdate') IS NULL ALTER TABLE Permissions ADD CanUpdate BIT DEFAULT 0;
+                    IF COL_LENGTH('Permissions','CanDelete') IS NULL ALTER TABLE Permissions ADD CanDelete BIT DEFAULT 0;
+                    IF COL_LENGTH('Permissions','IdRole')    IS NULL ALTER TABLE Permissions ADD IdRole    INT NULL;
+                END
+            ");
+        }
+        catch { /* tolérer */ }
+
+        // Seed default permissions — schema-safe
+        try
+        {
+            await conn.ExecuteAsync(@"
+                IF COL_LENGTH('Permissions','Resource') IS NOT NULL
+                   AND COL_LENGTH('Permissions','IdRole') IS NOT NULL
+                   AND NOT EXISTS (SELECT 1 FROM Permissions WHERE IdRole=1 AND Resource='users')
+                BEGIN
+                    INSERT INTO Permissions (IdRole, Resource, CanRead, CanCreate, CanUpdate, CanDelete) VALUES
+                        (1,'users',1,1,1,1),(1,'products',1,1,1,1),(1,'orders',1,1,1,1),
+                        (1,'categories',1,1,1,1),(1,'payments',1,1,1,1),(1,'transports',1,1,1,1),
+                        (1,'reports',1,0,0,0),
+                        (3,'products',1,1,1,1),(3,'orders',1,0,1,0),(3,'reports',1,0,0,0),
+                        (2,'orders',1,1,1,0),(2,'reviews',1,1,1,1);
+                END
+            ");
+        }
+        catch { /* tolérer */ }
+
+        // Seed default transports
+        try
+        {
+            await conn.ExecuteAsync(@"
+                IF OBJECT_ID('Transports','U') IS NOT NULL
+                   AND NOT EXISTS (SELECT 1 FROM Transports)
+                BEGIN
+                    INSERT INTO Transports (Name, Phone, DeliveryFee, FreeFrom, Zones, Active) VALUES
+                        ('Aramex Tunisie',  '+216 71 100 100', 8.000,  200.000, 'Grand Tunis, Sfax, Sousse', 1),
+                        ('Colissimo',       '+216 71 200 200', 6.000,  150.000, 'Toute la Tunisie',           1),
+                        ('Rapid Poste',     '+216 71 300 300', 4.500,  100.000, 'Toute la Tunisie',           1),
+                        ('First Delivery',  '+216 71 400 400', 7.000,  180.000, 'Grand Tunis, Nabeul',        1);
+                END
+            ");
+        }
+        catch { /* tolérer */ }
+
+        // Seed minimal defaults — schema-safe (tolère les colonnes absentes)
+        try
+        {
+            await conn.ExecuteAsync(@"
+                IF COL_LENGTH('Countries','Code') IS NOT NULL
+                   AND NOT EXISTS (SELECT 1 FROM Countries WHERE Code='TN')
+                BEGIN
+                    INSERT INTO Countries (Title, Flag, Code, PhoneCode) VALUES
+                        ('Tunisie', N'🇹🇳', 'TN', '+216'),
+                        ('France',  N'🇫🇷', 'FR', '+33'),
+                        ('Maroc',   N'🇲🇦', 'MA', '+212'),
+                        ('Algérie', N'🇩🇿', 'DZ', '+213');
+                END
+            ");
+        }
+        catch { /* schéma Countries différent — ignorer */ }
+
+        try
+        {
+            await conn.ExecuteAsync(@"
+                IF COL_LENGTH('Causes','Title') IS NOT NULL
+                   AND NOT EXISTS (SELECT 1 FROM Causes WHERE Title='Litige commande')
+                BEGIN
+                    INSERT INTO Causes (Title, Description, Type) VALUES
+                        ('Litige commande',   'Problème avec une commande ou livraison', 'order'),
+                        ('Produit défectueux','Article reçu endommagé ou non conforme', 'product'),
+                        ('Vendeur injoignable','Vendeur ne répond pas', 'vendor'),
+                        ('Autre',             'Autre type de réclamation', 'other');
+                END
+            ");
+        }
+        catch { /* schéma Causes différent — ignorer */ }
 
         // ── Seed demo accounts (password: Test1234) ───────────────────────
         // Hash computed in C# because SQL Server has no bcrypt.
-        await SeedDemoAccountsAsync(conn);
+        try { await SeedDemoAccountsAsync(conn); }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[SeedDemoAccounts] Ignoré : " + ex.Message);
+        }
     }
 
     private static async Task SeedDemoAccountsAsync(SqlConnection conn)
