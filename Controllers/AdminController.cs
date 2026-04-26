@@ -17,26 +17,122 @@ public class AdminController : ControllerBase
     [HttpGet("stats")]
     public async Task<IActionResult> GetStats()
     {
-        var users    = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE IdRole=2 AND Active=1");
-        var vendors  = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE IdRole=3 AND Active=1");
-        var pending  = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE IdRole=3 AND IsVerified=0 AND Active=1");
-        var deals    = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Deals WHERE active=1");
-        var orders   = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Orders WHERE Active=1");
-        var reports  = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Reports WHERE State=0");
-        var ads      = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Ads WHERE Active=1");
+        var users           = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE IdRole=2 AND Active=1");
+        var vendors         = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE IdRole=3 AND Active=1");
+        var pendingVendors  = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Users WHERE IdRole=3 AND IsVerified=0 AND Active=1");
+        var deals           = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Deals WHERE active=1");
+        var pendingProducts = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Deals WHERE active=0");
+        var orders          = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Orders");
+        var reports         = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Reports WHERE State=0");
+        var ads             = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Ads WHERE Active=1");
+        var pendingAnnonces = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Ads WHERE Active=0");
+
+        // Revenue total & paid via Invoices
+        var totalRevenue = await _db.ExecuteScalarAsync<decimal?>(
+            "SELECT ISNULL(SUM(Total), 0) FROM Invoices") ?? 0m;
+        var paidRevenue  = await _db.ExecuteScalarAsync<decimal?>(
+            "SELECT ISNULL(SUM(Total), 0) FROM Invoices WHERE Status='paid'") ?? 0m;
+        var deliveriesCount = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Deliveries");
+        var invoicesCount   = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Invoices");
+
+        // Orders by month (12 derniers mois) — array indexé Jan→Déc de l'année courante
+        var year = DateTime.Now.Year;
+        var monthRows = await _db.QueryAsync<dynamic>(
+            @"SELECT MONTH(DateTimeCommand) AS m, COUNT(*) AS c
+              FROM Orders WHERE YEAR(DateTimeCommand) = @Y
+              GROUP BY MONTH(DateTimeCommand)",
+            new { Y = year });
+        var ordersByMonth = new int[12];
+        foreach (var r in monthRows) ordersByMonth[(int)r.m - 1] = (int)r.c;
+
+        // Orders by status (mapping Active → status)
+        var statusRows = await _db.QueryAsync<dynamic>(
+            @"SELECT Active AS a, COUNT(*) AS c FROM Orders GROUP BY Active");
+        var ordersByStatus = new Dictionary<string, int>
+            { ["pending"]=0, ["confirmed"]=0, ["shipped"]=0, ["delivered"]=0, ["cancelled"]=0 };
+        foreach (var r in statusRows)
+        {
+            var key = (int)r.a switch { 2 => "delivered", 3 => "confirmed", 0 => "cancelled", _ => "pending" };
+            ordersByStatus[key] = (int)r.c;
+        }
+
+        // Top 5 vendors par CA (via Invoices)
+        var topVendors = await _db.QueryAsync<dynamic>(
+            @"SELECT TOP 5 i.IdVendor AS id,
+                     CONCAT(u.FirstName,' ',u.LastName) AS name,
+                     COUNT(i.IdInvoice) AS invoices,
+                     SUM(i.Total) AS revenue
+              FROM Invoices i LEFT JOIN Users u ON i.IdVendor=u.IdUser
+              WHERE i.IdVendor IS NOT NULL
+              GROUP BY i.IdVendor, u.FirstName, u.LastName
+              ORDER BY SUM(i.Total) DESC");
 
         return Ok(new
         {
             users,
             vendors,
-            pending_vendors  = pending,
-            products         = deals,
+            pending_vendors   = pendingVendors,
+            products          = deals,
+            pending_products  = pendingProducts,
             orders,
             open_reclamations = reports,
             ads,
-            pending_products = 0,
-            revenue          = 0,
+            pending_annonces  = pendingAnnonces,
+            revenue           = totalRevenue,
+            paid_revenue      = paidRevenue,
+            deliveries        = deliveriesCount,
+            invoices          = invoicesCount,
+            orders_by_month   = ordersByMonth,
+            orders_by_status  = ordersByStatus,
+            top_vendors       = topVendors,
+            year,
         });
+    }
+
+    // ─── GET /api/admin/users/:id ─────────────────────────────
+    [HttpGet("users/{id:long}")]
+    public async Task<IActionResult> GetUserDetails(long id)
+    {
+        var user = await _db.QueryFirstOrDefaultAsync<User>(
+            @"SELECT IdUser, Email, FirstName, LastName, Username, Telephone,
+                     IsVerified, IsPremuim, Active, CreationDate, IdRole
+              FROM Users WHERE IdUser = @Id", new { Id = id });
+        if (user == null) return NotFound(new { message = "Utilisateur introuvable." });
+
+        var orders = await _db.QueryAsync<dynamic>(
+            @"SELECT o.IdOrder AS id, o.DateTimeCommand AS date, o.Active AS active,
+                     d.titleDeal AS deal_title,
+                     TRY_CAST(REPLACE(d.priceDeal,',','.') AS DECIMAL(18,3)) AS price
+              FROM Orders o LEFT JOIN Deals d ON o.IdDeal = d.IdDeal
+              WHERE o.IdUser = @Id ORDER BY o.IdOrder DESC", new { Id = id });
+
+        var stats = new
+        {
+            total_orders   = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Orders WHERE IdUser=@Id", new { Id = id }),
+            total_invoices = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Invoices WHERE IdUser=@Id", new { Id = id }),
+            total_paid     = await _db.ExecuteScalarAsync<decimal?>(
+                "SELECT ISNULL(SUM(Total),0) FROM Invoices WHERE IdUser=@Id AND Status='paid'",
+                new { Id = id }) ?? 0m,
+            total_reclam   = await _db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM Reports WHERE IdUser=@Id", new { Id = id }),
+        };
+
+        return Ok(new { user = BuildUserResponse(user), orders, stats });
+    }
+
+    // ─── DELETE /api/admin/users/:id ──────────────────────────
+    [HttpDelete("users/{id:long}")]
+    public async Task<IActionResult> DeleteUser(long id)
+    {
+        try
+        {
+            var rows = await _db.ExecuteAsync("DELETE FROM Users WHERE IdUser=@Id", new { Id = id });
+            if (rows == 0) return NotFound(new { message = "Utilisateur introuvable." });
+            return Ok(new { message = "Utilisateur supprimé." });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { message = "Suppression impossible : " + ex.Message });
+        }
     }
 
     // ─── GET /api/admin/users ─────────────────────────────────

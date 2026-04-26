@@ -48,7 +48,7 @@ public class DeliveriesController : ControllerBase
                     od.Address   AS DetailAddress,
                     CONCAT(u.FirstName, ' ', u.LastName) AS UserClientName,
                     u.Email      AS UserEmail,
-                    u.NumTel     AS UserPhone,
+                    u.Telephone  AS UserPhone,
                     dl.titleDeal AS DealTitle,
                     TRY_CAST(REPLACE(dl.priceDeal, ',', '.') AS DECIMAL(18,3)) AS DealPrice
             FROM    Deliveries d
@@ -60,7 +60,7 @@ public class DeliveriesController : ControllerBase
                 SELECT TOP 1 FirstName, LastName, Email, Telephone, Address
                 FROM   OrderDetails
                 WHERE  IdOrder = d.IdOrder
-                ORDER BY IdOrderDetail DESC
+                ORDER BY IdOrderDeatils DESC
             ) od";
 
         string sql;

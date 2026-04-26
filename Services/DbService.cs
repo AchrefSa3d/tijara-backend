@@ -540,6 +540,86 @@ public class DbService
         }
         catch { /* tolérer */ }
 
+        // ── Migration Countries — ajoute colonnes manquantes si DB ancienne ──
+        try
+        {
+            await conn.ExecuteAsync(@"
+                IF OBJECT_ID('Countries','U') IS NOT NULL
+                BEGIN
+                    IF COL_LENGTH('Countries','Title') IS NULL
+                        ALTER TABLE Countries ADD Title NVARCHAR(200) NULL;
+                    IF COL_LENGTH('Countries','Flag') IS NULL
+                        ALTER TABLE Countries ADD Flag NVARCHAR(500) NULL;
+                    IF COL_LENGTH('Countries','Code') IS NULL
+                        ALTER TABLE Countries ADD Code NVARCHAR(10) NULL;
+                    IF COL_LENGTH('Countries','PhoneCode') IS NULL
+                        ALTER TABLE Countries ADD PhoneCode NVARCHAR(10) NULL;
+                    IF COL_LENGTH('Countries','Active') IS NULL
+                        ALTER TABLE Countries ADD Active BIT NOT NULL DEFAULT 1;
+                    IF COL_LENGTH('Countries','CreatedAt') IS NULL
+                        ALTER TABLE Countries ADD CreatedAt DATETIME NOT NULL DEFAULT GETDATE();
+                END
+            ");
+            // Si l'ancienne colonne CountryName / Name / Country existe et Title est vide → recopier
+            foreach (var legacy in new[] { "CountryName", "Name", "Country", "Nom" })
+            {
+                try
+                {
+                    await conn.ExecuteAsync($@"
+                        IF COL_LENGTH('Countries','{legacy}') IS NOT NULL
+                           AND COL_LENGTH('Countries','Title') IS NOT NULL
+                        BEGIN
+                            DECLARE @sql NVARCHAR(MAX) = N'UPDATE Countries SET Title = [{legacy}] WHERE (Title IS NULL OR Title='''') AND [{legacy}] IS NOT NULL';
+                            EXEC sp_executesql @sql;
+                        END
+                    ");
+                }
+                catch { /* colonne absente, continue */ }
+            }
+            // Fallback : si Title est encore NULL, mettre "Pays #ID"
+            await conn.ExecuteAsync(@"
+                UPDATE Countries SET Title = CONCAT('Pays #', IdCountry) WHERE Title IS NULL OR Title = '';
+                UPDATE Countries SET Active = 1 WHERE Active IS NULL;
+            ");
+        }
+        catch (Exception ex) { Console.WriteLine($"[Countries migration] {ex.Message}"); }
+
+        // ── Migration Cities — ajoute colonnes manquantes ──
+        try
+        {
+            await conn.ExecuteAsync(@"
+                IF OBJECT_ID('Cities','U') IS NOT NULL
+                BEGIN
+                    IF COL_LENGTH('Cities','Title')     IS NULL ALTER TABLE Cities ADD Title NVARCHAR(200) NULL;
+                    IF COL_LENGTH('Cities','TitleEn')   IS NULL ALTER TABLE Cities ADD TitleEn NVARCHAR(200) NULL;
+                    IF COL_LENGTH('Cities','TitleAr')   IS NULL ALTER TABLE Cities ADD TitleAr NVARCHAR(200) NULL;
+                    IF COL_LENGTH('Cities','Image')     IS NULL ALTER TABLE Cities ADD Image NVARCHAR(500) NULL;
+                    IF COL_LENGTH('Cities','IdCountry') IS NULL ALTER TABLE Cities ADD IdCountry BIGINT NULL;
+                    IF COL_LENGTH('Cities','Active')    IS NULL ALTER TABLE Cities ADD Active BIT NOT NULL DEFAULT 1;
+                END
+            ");
+            foreach (var legacy in new[] { "CityName", "Name", "City", "Nom" })
+            {
+                try
+                {
+                    await conn.ExecuteAsync($@"
+                        IF COL_LENGTH('Cities','{legacy}') IS NOT NULL
+                           AND COL_LENGTH('Cities','Title') IS NOT NULL
+                        BEGIN
+                            DECLARE @sql NVARCHAR(MAX) = N'UPDATE Cities SET Title = [{legacy}] WHERE (Title IS NULL OR Title='''') AND [{legacy}] IS NOT NULL';
+                            EXEC sp_executesql @sql;
+                        END
+                    ");
+                }
+                catch { /* colonne absente */ }
+            }
+            await conn.ExecuteAsync(@"
+                UPDATE Cities SET Title = CONCAT('Ville #', IdCity) WHERE Title IS NULL OR Title = '';
+                UPDATE Cities SET Active = 1 WHERE Active IS NULL;
+            ");
+        }
+        catch (Exception ex) { Console.WriteLine($"[Cities migration] {ex.Message}"); }
+
         // Seed default transports
         try
         {

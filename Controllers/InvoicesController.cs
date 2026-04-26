@@ -36,18 +36,20 @@ public class InvoicesController : ControllerBase
         string sql;
         object? param = null;
 
-        // Toujours joindre Users (acheteur) et Deals pour enrichir l'affichage
+        // Toujours joindre Users (acheteur), Vendor (Deals.idUser) et Deals pour enrichir l'affichage
         var commonSelect = @"
             SELECT i.IdInvoice, i.Number, i.IdOrder, i.IdUser, i.IdVendor,
                    i.Subtotal, i.Tax, i.DeliveryFee, i.Total, i.Status,
                    i.IssuedAt, i.PaidAt,
                    LTRIM(RTRIM(CONCAT(u.FirstName,' ',u.LastName))) AS ClientName,
-                   u.Email AS ClientEmail,
+                   u.Email  AS ClientEmail,
+                   LTRIM(RTRIM(CONCAT(uv.FirstName,' ',uv.LastName))) AS VendorName,
                    d.titleDeal AS DealTitle
             FROM Invoices i
-            LEFT JOIN Users u ON i.IdUser = u.IdUser
-            LEFT JOIN Orders o ON i.IdOrder = o.IdOrder
-            LEFT JOIN Deals  d ON o.IdDeal  = d.IdDeal";
+            LEFT JOIN Users u  ON i.IdUser   = u.IdUser
+            LEFT JOIN Users uv ON i.IdVendor = uv.IdUser
+            LEFT JOIN Orders o ON i.IdOrder  = o.IdOrder
+            LEFT JOIN Deals  d ON o.IdDeal   = d.IdDeal";
 
         if (IsAdmin)
         {
@@ -64,8 +66,28 @@ public class InvoicesController : ControllerBase
             param = new { UserId = CurrentUserId };
         }
 
-        var list = await _db.QueryAsync<dynamic>(sql, param);
-        return Ok(list);
+        var rows = await _db.QueryAsync<dynamic>(sql, param);
+        // Projection explicite en snake_case pour le frontend
+        var result = rows.Select(r => new
+        {
+            id_invoice    = (long)r.IdInvoice,
+            number        = (string)r.Number,
+            id_order      = (long)r.IdOrder,
+            id_user       = (long)r.IdUser,
+            id_vendor     = (long?)r.IdVendor,
+            subtotal      = (decimal)r.Subtotal,
+            tax           = (decimal)r.Tax,
+            delivery_fee  = (decimal)r.DeliveryFee,
+            total         = (decimal)r.Total,
+            status        = (string)r.Status,
+            issued_at     = (DateTime?)r.IssuedAt,
+            paid_at       = (DateTime?)r.PaidAt,
+            client_name   = (string?)r.ClientName,
+            client_email  = (string?)r.ClientEmail,
+            vendor_name   = (string?)r.VendorName,
+            deal_title    = (string?)r.DealTitle,
+        });
+        return Ok(result);
     }
 
     // GET /api/invoices/:id

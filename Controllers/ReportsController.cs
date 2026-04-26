@@ -42,7 +42,7 @@ public class ReportsController : ControllerBase
         var stats = await _db.QueryFirstOrDefaultAsync<dynamic>($@"
             ;WITH OrdersView AS (
                 SELECT o.IdOrder, o.IdUser, o.IdDeal, o.DateTimeCommand, o.Active,
-                       dl.priceDeal AS Total, dl.idUser AS IdVendor,
+                       TRY_CAST(REPLACE(dl.priceDeal,',','.') AS DECIMAL(18,3)) AS Total, dl.idUser AS IdVendor,
                        ISNULL(dv.Status,'pending') AS Status,
                        ISNULL(iv.Status,'unpaid')  AS PaymentStatus
                 FROM Orders o
@@ -73,7 +73,7 @@ public class ReportsController : ControllerBase
             SELECT TOP 12
                    FORMAT(o.DateTimeCommand,'yyyy-MM') AS Month,
                    COUNT(*) AS Orders,
-                   ISNULL(SUM(dl.priceDeal),0) AS Revenue
+                   ISNULL(SUM(TRY_CAST(REPLACE(dl.priceDeal,',','.') AS DECIMAL(18,3))),0) AS Revenue
             FROM Orders o
             LEFT JOIN Deals dl ON o.IdDeal = dl.IdDeal
             WHERE o.DateTimeCommand >= DATEADD(MONTH, -12, GETDATE()) {vendorFilter}
@@ -107,7 +107,7 @@ public class ReportsController : ControllerBase
             SELECT TOP (@Limit) u.IdUser, u.Email,
                    CONCAT(u.FirstName,' ',u.LastName) AS Name,
                    COUNT(o.IdOrder) AS Orders,
-                   ISNULL(SUM(dl.priceDeal),0) AS TotalSpent
+                   ISNULL(SUM(TRY_CAST(REPLACE(dl.priceDeal,',','.') AS DECIMAL(18,3))),0) AS TotalSpent
             FROM Users u
             LEFT JOIN Orders o  ON o.IdUser=u.IdUser
             LEFT JOIN Deals  dl ON o.IdDeal=dl.IdDeal
