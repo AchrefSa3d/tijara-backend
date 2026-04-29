@@ -10,6 +10,8 @@ using TijaraApi.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 // ─── Services ────────────────────────────────────────────────
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
 builder.Services.AddControllers()
     .AddJsonOptions(opts =>
     {
@@ -80,6 +82,8 @@ builder.Services.AddAuthorization();
 
 // ─── Build ────────────────────────────────────────────────────
 var app = builder.Build();
+app.UseSwagger();
+app.UseSwaggerUI();
 
 // Initialize additional tables (Follows, Notifications)
 var db = app.Services.GetRequiredService<DbService>();

@@ -90,6 +90,12 @@ public class InvoicesController : ControllerBase
         return Ok(result);
     }
 
+    // GET /api/invoices (alias for GetList, mine or all for admin)
+    public async Task<IActionResult> GetAll()
+    {
+        return await GetList();
+    }
+
     // GET /api/invoices/:id
     [HttpGet("{id:long}")]
     public async Task<IActionResult> GetOne(long id)
@@ -97,13 +103,14 @@ public class InvoicesController : ControllerBase
         var inv = await _db.QueryFirstOrDefaultAsync<Invoice>(
             "SELECT * FROM Invoices WHERE IdInvoice=@Id", new { Id = id });
         if (inv == null) return NotFound();
+        
         // Access check
         if (!IsAdmin && inv.IdUser != CurrentUserId && inv.IdVendor != CurrentUserId)
             return Forbid();
         return Ok(inv);
     }
 
-    // POST /api/invoices — génère une facture à partir d'une commande
+    // POST /api/invoices/from-order/:idOrder — génère une facture à partir d'une commande
     [HttpPost("from-order/{idOrder:long}")]
     public async Task<IActionResult> FromOrder(long idOrder)
     {
@@ -160,6 +167,24 @@ public class InvoicesController : ControllerBase
         }
     }
 
+    // POST /api/invoices (admin/vendor — create invoice directly)
+    [HttpPost]
+    [Authorize(Roles = "admin,vendor")]
+    public async Task<IActionResult> Create([FromBody] InvoiceRequest req)
+    {
+        var tax   = req.Amount * 0.19m; // 19% TVA
+        var total = req.Amount + tax;
+        var ref_  = "INV-" + DateTime.Now.ToString("yyyyMMdd") + "-" + new Random().Next(1000, 9999);
+
+        var id = await _db.ExecuteScalarAsync<long>(@"
+            INSERT INTO Invoices (IdOrder, IdUser, Amount, TaxAmount, TotalAmount, InvoiceRef, Status)
+            OUTPUT INSERTED.IdInvoice
+            VALUES (@IdOrder, @IdUser, @Amount, @Tax, @Total, @Ref, 'pending')",
+            new { req.IdOrder, req.IdUser, req.Amount, Tax = tax, Total = total, Ref = ref_ });
+
+        return StatusCode(201, new { id, invoice_ref = ref_, total_amount = total });
+    }
+
     // PATCH /api/invoices/:id/paid
     [HttpPatch("{id:long}/paid")]
     public async Task<IActionResult> MarkPaid(long id)
@@ -167,6 +192,25 @@ public class InvoicesController : ControllerBase
         await _db.ExecuteAsync(
             "UPDATE Invoices SET Status='paid', PaidAt=GETDATE() WHERE IdInvoice=@Id",
             new { Id = id });
-        return Ok();
+        return Ok(new { message = "Facture marquée comme payée." });
     }
+
+    // PATCH /api/invoices/:id/pay (alternate route)
+    [HttpPatch("{id:long}/pay")]
+    [Authorize(Roles = "admin")]
+    public async Task<IActionResult> MarkPaidAlt(long id)
+    {
+        var rows = await _db.ExecuteAsync(
+            "UPDATE Invoices SET Status='paid', PaidAt=GETDATE() WHERE IdInvoice=@Id",
+            new { Id = id });
+        if (rows == 0) return NotFound();
+        return Ok(new { message = "Facture marquée comme payée." });
+    }
+}
+
+public class InvoiceRequest
+{
+    public long    IdOrder { get; set; }
+    public long    IdUser  { get; set; }
+    public decimal Amount  { get; set; }
 }

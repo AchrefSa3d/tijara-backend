@@ -15,28 +15,24 @@ public class DbService
 
     public SqlConnection CreateConnection() => new SqlConnection(_connectionString);
 
-    // Shorthand : execute a query and return results
     public async Task<IEnumerable<T>> QueryAsync<T>(string sql, object? param = null)
     {
         using var conn = CreateConnection();
         return await conn.QueryAsync<T>(sql, param);
     }
 
-    // Return first or default
     public async Task<T?> QueryFirstOrDefaultAsync<T>(string sql, object? param = null)
     {
         using var conn = CreateConnection();
         return await conn.QueryFirstOrDefaultAsync<T>(sql, param);
     }
 
-    // Execute (INSERT, UPDATE, DELETE) — returns rows affected
     public async Task<int> ExecuteAsync(string sql, object? param = null)
     {
         using var conn = CreateConnection();
         return await conn.ExecuteAsync(sql, param);
     }
 
-    // Execute scalar (COUNT, SUM…)
     public async Task<T?> ExecuteScalarAsync<T>(string sql, object? param = null)
     {
         using var conn = CreateConnection();
@@ -71,37 +67,26 @@ public class DbService
             );
         ");
 
-        // ── Colonnes optionnelles sur Users (migration additive) ───────────
+        // ── Colonnes optionnelles sur Users ────────────────────────────────
         await conn.ExecuteAsync(@"
-            IF NOT EXISTS (
-                SELECT 1 FROM sys.columns
-                WHERE object_id = OBJECT_ID(N'Users') AND name = N'BirthDate')
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Users') AND name = N'BirthDate')
             ALTER TABLE Users ADD BirthDate NVARCHAR(20) NULL;
 
-            IF NOT EXISTS (
-                SELECT 1 FROM sys.columns
-                WHERE object_id = OBJECT_ID(N'Users') AND name = N'Gender')
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Users') AND name = N'Gender')
             ALTER TABLE Users ADD Gender NVARCHAR(20) NULL;
 
-            IF NOT EXISTS (
-                SELECT 1 FROM sys.columns
-                WHERE object_id = OBJECT_ID(N'Users') AND name = N'City')
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Users') AND name = N'City')
             ALTER TABLE Users ADD City NVARCHAR(100) NULL;
         ");
 
-        // ── Colonnes optionnelles sur Ads (migration additive) ─────────────
+        // ── Colonnes optionnelles sur Ads ──────────────────────────────────
         await conn.ExecuteAsync(@"
-            IF NOT EXISTS (
-                SELECT 1 FROM sys.columns
-                WHERE object_id = OBJECT_ID(N'Ads') AND name = N'Type')
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Ads') AND name = N'Type')
             ALTER TABLE Ads ADD Type NVARCHAR(20) NULL DEFAULT 'annonce';
         ");
-        // Set default type for existing rows that have NULL
-        await conn.ExecuteAsync(
-            "UPDATE Ads SET Type = 'annonce' WHERE Type IS NULL"
-        );
+        await conn.ExecuteAsync("UPDATE Ads SET Type = 'annonce' WHERE Type IS NULL");
 
-        // ── Tables pour likes et commentaires des annonces ─────────────────
+        // ── Tables likes et commentaires ───────────────────────────────────
         await conn.ExecuteAsync(@"
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AdLikes')
             CREATE TABLE AdLikes (
@@ -122,7 +107,7 @@ public class DbService
             );
         ");
 
-        // ── Table pour tokens email (confirmation, reset mot de passe) ─────
+        // ── EmailTokens ────────────────────────────────────────────────────
         await conn.ExecuteAsync(@"
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'EmailTokens')
             CREATE TABLE EmailTokens (
@@ -136,35 +121,30 @@ public class DbService
             );
         ");
 
-        // ── Colonne EmailConfirmed sur Users ───────────────────────────────
+        // ── EmailConfirmed sur Users ───────────────────────────────────────
         await conn.ExecuteAsync(@"
-            IF NOT EXISTS (
-                SELECT 1 FROM sys.columns
-                WHERE object_id = OBJECT_ID(N'Users') AND name = N'EmailConfirmed')
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Users') AND name = N'EmailConfirmed')
             ALTER TABLE Users ADD EmailConfirmed BIT NULL DEFAULT 1;
         ");
-        // Marquer les utilisateurs existants comme confirmés
         await conn.ExecuteAsync("UPDATE Users SET EmailConfirmed = 1 WHERE EmailConfirmed IS NULL");
 
-        // ── Colonne FacebookId sur Users ───────────────────────────────────
+        // ── FacebookId sur Users ───────────────────────────────────────────
         await conn.ExecuteAsync(@"
-            IF NOT EXISTS (
-                SELECT 1 FROM sys.columns
-                WHERE object_id = OBJECT_ID(N'Users') AND name = N'FacebookId')
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Users') AND name = N'FacebookId')
             ALTER TABLE Users ADD FacebookId NVARCHAR(100) NULL;
         ");
 
-        // ── Paramètres ADMIN (key/value) ───────────────────────────────────
+        // ── AdminSettings ──────────────────────────────────────────────────
         await conn.ExecuteAsync(@"
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AdminSettings')
             CREATE TABLE AdminSettings (
-                [Key]       NVARCHAR(100) NOT NULL PRIMARY KEY,
-                [Value]     NVARCHAR(MAX) NULL,
-                UpdatedAt   DATETIME      NOT NULL DEFAULT GETDATE()
+                [Key]     NVARCHAR(100) NOT NULL PRIMARY KEY,
+                [Value]   NVARCHAR(MAX) NULL,
+                UpdatedAt DATETIME      NOT NULL DEFAULT GETDATE()
             );
         ");
 
-        // ── Packets de points ──────────────────────────────────────────────
+        // ── PointPackets ───────────────────────────────────────────────────
         await conn.ExecuteAsync(@"
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PointPackets')
             CREATE TABLE PointPackets (
@@ -179,7 +159,24 @@ public class DbService
             );
         ");
 
-        // ── Valeurs par défaut des AdminSettings ───────────────────────────
+        await conn.ExecuteAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'PointPackets') AND name = N'Title')
+                ALTER TABLE PointPackets ADD Title NVARCHAR(200) NOT NULL DEFAULT '';
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'PointPackets') AND name = N'Description')
+                ALTER TABLE PointPackets ADD Description NVARCHAR(1000) NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'PointPackets') AND name = N'PointsCount')
+                ALTER TABLE PointPackets ADD PointsCount INT NOT NULL DEFAULT 0;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'PointPackets') AND name = N'Price')
+                ALTER TABLE PointPackets ADD Price DECIMAL(10,2) NOT NULL DEFAULT 0;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'PointPackets') AND name = N'Discount')
+                ALTER TABLE PointPackets ADD Discount DECIMAL(5,2) NOT NULL DEFAULT 0;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'PointPackets') AND name = N'Active')
+                ALTER TABLE PointPackets ADD Active BIT NOT NULL DEFAULT 1;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'PointPackets') AND name = N'CreatedAt')
+                ALTER TABLE PointPackets ADD CreatedAt DATETIME NOT NULL DEFAULT GETDATE();
+        ");
+
+        // ── AdminSettings defaults ─────────────────────────────────────────
         var defaults = new Dictionary<string, string>
         {
             { "money_transfer_commission_pct",       "2.5"   },
@@ -215,7 +212,7 @@ public class DbService
                 new { Key = kv.Key, Value = kv.Value });
         }
 
-        // ═══════════════ LOT 1 — CATALOG & MODERATION TABLES ═══════════════
+        // ═══════════════ LOT 1 — CATALOG & MODERATION ═════════════════════
         await conn.ExecuteAsync(@"
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='Brands')
             CREATE TABLE Brands (
@@ -228,24 +225,24 @@ public class DbService
             );
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='Countries')
             CREATE TABLE Countries (
-                IdCountry  BIGINT IDENTITY(1,1) PRIMARY KEY,
-                Title      NVARCHAR(200)  NOT NULL,
-                Flag       NVARCHAR(500)  NULL,
-                Code       NVARCHAR(10)   NULL,
-                PhoneCode  NVARCHAR(10)   NULL,
-                Active     BIT            NOT NULL DEFAULT 1,
-                CreatedAt  DATETIME       NOT NULL DEFAULT GETDATE()
+                IdCountry BIGINT IDENTITY(1,1) PRIMARY KEY,
+                Title     NVARCHAR(200) NOT NULL,
+                Flag      NVARCHAR(500) NULL,
+                Code      NVARCHAR(10)  NULL,
+                PhoneCode NVARCHAR(10)  NULL,
+                Active    BIT           NOT NULL DEFAULT 1,
+                CreatedAt DATETIME      NOT NULL DEFAULT GETDATE()
             );
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='Cities')
             CREATE TABLE Cities (
-                IdCity     BIGINT IDENTITY(1,1) PRIMARY KEY,
-                Title      NVARCHAR(200)  NOT NULL,
-                IdCountry  BIGINT         NULL,
-                TitleEn    NVARCHAR(200)  NULL,
-                TitleAr    NVARCHAR(200)  NULL,
-                Image      NVARCHAR(500)  NULL,
-                Active     BIT            NOT NULL DEFAULT 1,
-                CreatedAt  DATETIME       NOT NULL DEFAULT GETDATE()
+                IdCity    BIGINT IDENTITY(1,1) PRIMARY KEY,
+                Title     NVARCHAR(200) NOT NULL,
+                IdCountry BIGINT        NULL,
+                TitleEn   NVARCHAR(200) NULL,
+                TitleAr   NVARCHAR(200) NULL,
+                Image     NVARCHAR(500) NULL,
+                Active    BIT           NOT NULL DEFAULT 1,
+                CreatedAt DATETIME      NOT NULL DEFAULT GETDATE()
             );
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='Causes')
             CREATE TABLE Causes (
@@ -283,42 +280,109 @@ public class DbService
             );
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='BoostAdsPacks')
             CREATE TABLE BoostAdsPacks (
-                IdBoost      BIGINT IDENTITY(1,1) PRIMARY KEY,
-                Title        NVARCHAR(200) NOT NULL,
-                Price        DECIMAL(10,2) NOT NULL DEFAULT 0,
-                Discount     DECIMAL(5,2)  NOT NULL DEFAULT 0,
-                MaxDuration  INT           NOT NULL DEFAULT 7,
-                Sliders      BIT           NOT NULL DEFAULT 0,
-                SideBar      BIT           NOT NULL DEFAULT 0,
-                Footer       BIT           NOT NULL DEFAULT 0,
-                RelatedPost  BIT           NOT NULL DEFAULT 0,
-                FirstLogin   BIT           NOT NULL DEFAULT 0,
-                OrdersCount  INT           NOT NULL DEFAULT 0,
-                Links        BIT           NOT NULL DEFAULT 0,
-                Active       BIT           NOT NULL DEFAULT 1,
-                CreatedAt    DATETIME      NOT NULL DEFAULT GETDATE()
+                IdBoost     BIGINT IDENTITY(1,1) PRIMARY KEY,
+                Title       NVARCHAR(200) NOT NULL,
+                Price       DECIMAL(10,2) NOT NULL DEFAULT 0,
+                Discount    DECIMAL(5,2)  NOT NULL DEFAULT 0,
+                MaxDuration INT           NOT NULL DEFAULT 7,
+                Sliders     BIT           NOT NULL DEFAULT 0,
+                SideBar     BIT           NOT NULL DEFAULT 0,
+                Footer      BIT           NOT NULL DEFAULT 0,
+                RelatedPost BIT           NOT NULL DEFAULT 0,
+                FirstLogin  BIT           NOT NULL DEFAULT 0,
+                OrdersCount INT           NOT NULL DEFAULT 0,
+                Links       BIT           NOT NULL DEFAULT 0,
+                Active      BIT           NOT NULL DEFAULT 1,
+                CreatedAt   DATETIME      NOT NULL DEFAULT GETDATE()
             );
+        ");
+
+        // ── Migration additive LOT 1 ───────────────────────────────────────
+        await conn.ExecuteAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Brands') AND name = N'Title')
+                ALTER TABLE Brands ADD Title NVARCHAR(200) NOT NULL DEFAULT '';
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Brands') AND name = N'Description')
+                ALTER TABLE Brands ADD Description NVARCHAR(1000) NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Brands') AND name = N'Image')
+                ALTER TABLE Brands ADD Image NVARCHAR(500) NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Brands') AND name = N'Active')
+                ALTER TABLE Brands ADD Active BIT NOT NULL DEFAULT 1;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Brands') AND name = N'CreatedAt')
+                ALTER TABLE Brands ADD CreatedAt DATETIME NOT NULL DEFAULT GETDATE();
+
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Countries') AND name = N'Title')
+                ALTER TABLE Countries ADD Title NVARCHAR(200) NOT NULL DEFAULT '';
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Countries') AND name = N'Active')
+                ALTER TABLE Countries ADD Active BIT NOT NULL DEFAULT 1;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Countries') AND name = N'Code')
+                ALTER TABLE Countries ADD Code NVARCHAR(10) NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Countries') AND name = N'PhoneCode')
+                ALTER TABLE Countries ADD PhoneCode NVARCHAR(10) NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Countries') AND name = N'Flag')
+                ALTER TABLE Countries ADD Flag NVARCHAR(500) NULL;
+
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Cities') AND name = N'Title')
+                ALTER TABLE Cities ADD Title NVARCHAR(200) NOT NULL DEFAULT '';
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Cities') AND name = N'IdCountry')
+                ALTER TABLE Cities ADD IdCountry BIGINT NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Cities') AND name = N'TitleEn')
+                ALTER TABLE Cities ADD TitleEn NVARCHAR(200) NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Cities') AND name = N'TitleAr')
+                ALTER TABLE Cities ADD TitleAr NVARCHAR(200) NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Cities') AND name = N'Image')
+                ALTER TABLE Cities ADD Image NVARCHAR(500) NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Cities') AND name = N'Active')
+                ALTER TABLE Cities ADD Active BIT NOT NULL DEFAULT 1;
+
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Causes') AND name = N'Title')
+                ALTER TABLE Causes ADD Title NVARCHAR(200) NOT NULL DEFAULT '';
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Causes') AND name = N'Description')
+                ALTER TABLE Causes ADD Description NVARCHAR(1000) NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Causes') AND name = N'Email')
+                ALTER TABLE Causes ADD Email NVARCHAR(200) NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Causes') AND name = N'Type')
+                ALTER TABLE Causes ADD Type NVARCHAR(50) NULL;
+
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Coupons') AND name = N'Title')
+                ALTER TABLE Coupons ADD Title NVARCHAR(200) NOT NULL DEFAULT '';
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Coupons') AND name = N'Description')
+                ALTER TABLE Coupons ADD Description NVARCHAR(1000) NULL;
+
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Prizes') AND name = N'Title')
+                ALTER TABLE Prizes ADD Title NVARCHAR(200) NOT NULL DEFAULT '';
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Prizes') AND name = N'Description')
+                ALTER TABLE Prizes ADD Description NVARCHAR(1000) NULL;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'Prizes') AND name = N'Image')
+                ALTER TABLE Prizes ADD Image NVARCHAR(500) NULL;
+
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'BoostAdsPacks') AND name = N'Title')
+                ALTER TABLE BoostAdsPacks ADD Title NVARCHAR(200) NOT NULL DEFAULT '';
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'BoostAdsPacks') AND name = N'Price')
+                ALTER TABLE BoostAdsPacks ADD Price DECIMAL(10,2) NOT NULL DEFAULT 0;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'BoostAdsPacks') AND name = N'Discount')
+                ALTER TABLE BoostAdsPacks ADD Discount DECIMAL(5,2) NOT NULL DEFAULT 0;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'BoostAdsPacks') AND name = N'MaxDuration')
+                ALTER TABLE BoostAdsPacks ADD MaxDuration INT NOT NULL DEFAULT 7;
+            IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'BoostAdsPacks') AND name = N'Active')
+                ALTER TABLE BoostAdsPacks ADD Active BIT NOT NULL DEFAULT 1;
         ");
 
         // ═══════════════ LOT 2 — WINNERS, WISHLISTS, REVIEWS ══════════════
         await conn.ExecuteAsync(@"
-            -- Winners (gagnants des prix/tirages)
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='Winners')
             CREATE TABLE Winners (
-                IdWinner    BIGINT IDENTITY(1,1) PRIMARY KEY,
-                IdUser      BIGINT         NULL,
-                IdPrize     BIGINT         NULL,
-                IdOrder     BIGINT         NULL,
-                FullName    NVARCHAR(300)  NULL,
-                Email       NVARCHAR(200)  NULL,
-                Phone       NVARCHAR(50)   NULL,
-                Note        NVARCHAR(1000) NULL,
-                WonAt       DATETIME       NOT NULL DEFAULT GETDATE(),
-                Active      BIT            NOT NULL DEFAULT 1,
-                CreatedAt   DATETIME       NOT NULL DEFAULT GETDATE()
+                IdWinner  BIGINT IDENTITY(1,1) PRIMARY KEY,
+                IdUser    BIGINT         NULL,
+                IdPrize   BIGINT         NULL,
+                IdOrder   BIGINT         NULL,
+                FullName  NVARCHAR(300)  NULL,
+                Email     NVARCHAR(200)  NULL,
+                Phone     NVARCHAR(50)   NULL,
+                Note      NVARCHAR(1000) NULL,
+                WonAt     DATETIME       NOT NULL DEFAULT GETDATE(),
+                Active    BIT            NOT NULL DEFAULT 1,
+                CreatedAt DATETIME       NOT NULL DEFAULT GETDATE()
             );
-
-            -- Wishlists : annonces, deals, produits
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='WishlistAds')
             CREATE TABLE WishlistAds (
                 IdWish    BIGINT IDENTITY(1,1) PRIMARY KEY,
@@ -335,34 +399,31 @@ public class DbService
                 CreatedAt DATETIME DEFAULT GETDATE(),
                 CONSTRAINT UQ_WishlistDeals UNIQUE (IdUser, IdDeal)
             );
-
-            -- Reviews (avis / notes) pour ads, deals, produits
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='Reviews')
             CREATE TABLE Reviews (
-                IdReview    BIGINT IDENTITY(1,1) PRIMARY KEY,
-                IdUser      BIGINT         NOT NULL,
-                TargetType  NVARCHAR(20)   NOT NULL,   -- 'ad' | 'deal' | 'product'
-                TargetId    BIGINT         NOT NULL,
-                Rating      TINYINT        NOT NULL DEFAULT 5,
-                Comment     NVARCHAR(1000) NULL,
-                Active      BIT            NOT NULL DEFAULT 1,
-                CreatedAt   DATETIME       NOT NULL DEFAULT GETDATE(),
+                IdReview   BIGINT IDENTITY(1,1) PRIMARY KEY,
+                IdUser     BIGINT       NOT NULL,
+                TargetType NVARCHAR(20) NOT NULL,
+                TargetId   BIGINT       NOT NULL,
+                Rating     TINYINT      NOT NULL DEFAULT 5,
+                Comment    NVARCHAR(1000) NULL,
+                Active     BIT          NOT NULL DEFAULT 1,
+                CreatedAt  DATETIME     NOT NULL DEFAULT GETDATE(),
                 CONSTRAINT UQ_Reviews UNIQUE (IdUser, TargetType, TargetId)
             );
-
-            -- Likes sur annonces (si pas encore la contrainte)
             IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='Likes')
             CREATE TABLE Likes (
-                IdLike      BIGINT IDENTITY(1,1) PRIMARY KEY,
-                IdUser      BIGINT      NOT NULL,
-                TargetType  NVARCHAR(20) NOT NULL,   -- 'ad' | 'deal'
-                TargetId    BIGINT      NOT NULL,
-                CreatedAt   DATETIME    DEFAULT GETDATE(),
+                IdLike     BIGINT IDENTITY(1,1) PRIMARY KEY,
+                IdUser     BIGINT       NOT NULL,
+                TargetType NVARCHAR(20) NOT NULL,
+                TargetId   BIGINT       NOT NULL,
+                CreatedAt  DATETIME     DEFAULT GETDATE(),
                 CONSTRAINT UQ_Likes UNIQUE (IdUser, TargetType, TargetId)
             );
         ");
 
-        // ─── LOT 3 + 6 ────────────────────────────────────────────────────
+        // ═══════════════ LOT 3 + 6 — CORE TABLES ════════════════════════════
+        // MERGED: Combines upstream comprehensive schema with stashed defensive checks
         await conn.ExecuteAsync(@"
             IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Permissions' AND xtype='U')
             CREATE TABLE Permissions (
@@ -401,7 +462,11 @@ public class DbService
                 FreeFrom     DECIMAL(18,3) NULL,
                 Zones        NVARCHAR(500) NULL,
                 Active       BIT DEFAULT 1,
-                CreatedAt    DATETIME DEFAULT GETDATE()
+                CreatedAt    DATETIME DEFAULT GETDATE(),
+                -- Additional fields from TransportRequest DTO (support both schemas)
+                Description  NVARCHAR(500) NULL,
+                Price        DECIMAL(18,3) NULL,
+                Duration     NVARCHAR(50)  NULL
             );
 
             IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Deliveries' AND xtype='U')
@@ -540,6 +605,49 @@ public class DbService
         }
         catch { /* tolérer */ }
 
+        // ═══════════════ ADDITIONAL TABLES FROM STASHED ════════════════════
+        // RolePermissions, PaymentMethods, WalletTransactions, BlockedUsers
+        await conn.ExecuteAsync(@"
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='RolePermissions')
+            CREATE TABLE RolePermissions (
+                IdRolePermission BIGINT IDENTITY(1,1) PRIMARY KEY,
+                IdRole           INT    NOT NULL,
+                IdPermission     BIGINT NOT NULL,
+                CONSTRAINT UQ_RolePerm UNIQUE (IdRole, IdPermission)
+            );
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='PaymentMethods')
+            CREATE TABLE PaymentMethods (
+                IdPayment BIGINT IDENTITY(1,1) PRIMARY KEY,
+                Name      NVARCHAR(100) NOT NULL,
+                Type      NVARCHAR(50)  NOT NULL DEFAULT 'card',
+                IsDefault BIT           NOT NULL DEFAULT 0,
+                IdUser    BIGINT        NOT NULL,
+                Details   NVARCHAR(500) NULL,
+                Active    BIT           NOT NULL DEFAULT 1,
+                CreatedAt DATETIME      NOT NULL DEFAULT GETDATE()
+            );
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='WalletTransactions')
+            CREATE TABLE WalletTransactions (
+                IdTransaction BIGINT IDENTITY(1,1) PRIMARY KEY,
+                IdWallet      BIGINT        NOT NULL,
+                IdUser        BIGINT        NOT NULL,
+                Type          NVARCHAR(50)  NOT NULL,
+                Amount        DECIMAL(10,2) NOT NULL,
+                Description   NVARCHAR(500) NULL,
+                RefId         BIGINT        NULL,
+                Status        NVARCHAR(20)  NOT NULL DEFAULT 'completed',
+                CreatedAt     DATETIME      NOT NULL DEFAULT GETDATE()
+            );
+            IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='BlockedUsers')
+            CREATE TABLE BlockedUsers (
+                IdBlock   BIGINT IDENTITY(1,1) PRIMARY KEY,
+                IdUser    BIGINT NOT NULL,
+                IdBlocked BIGINT NOT NULL,
+                CreatedAt DATETIME DEFAULT GETDATE(),
+                CONSTRAINT UQ_BlockedUsers UNIQUE (IdUser, IdBlocked)
+            );
+        ");
+
         // ── Migration Countries — ajoute colonnes manquantes si DB ancienne ──
         try
         {
@@ -668,51 +776,9 @@ public class DbService
                 END
             ");
         }
-        catch { /* schéma Causes différent — ignorer */ }
-
-        // ── Seed demo accounts (password: Test1234) ───────────────────────
-        // Hash computed in C# because SQL Server has no bcrypt.
-        try { await SeedDemoAccountsAsync(conn); }
-        catch (Exception ex)
-        {
-            Console.WriteLine("[SeedDemoAccounts] Ignoré : " + ex.Message);
+        catch (SqlException ex )       {
+             Console.WriteLine("[Seed Causes] Ignoré : " + ex.Message);
         }
-    }
 
-    private static async Task SeedDemoAccountsAsync(SqlConnection conn)
-    {
-        var demos = new[]
-        {
-            new { Email = "admin@tijara.tn",   Username = "Admin",   First = "Super",  Last = "Admin",  IdRole = 1 },
-            new { Email = "moslem@gmail.com",  Username = "Moslem",  First = "Moslem", Last = "Test",   IdRole = 2 },
-            new { Email = "user@tijara.tn",    Username = "User",    First = "Demo",   Last = "User",   IdRole = 2 },
-            new { Email = "vendor@tijara.tn",  Username = "Vendor",  First = "Demo",   Last = "Vendor", IdRole = 3 },
-        };
-
-        foreach (var d in demos)
-        {
-            // Always (re)set the password so login works even after a manual DB edit.
-            var hash = BCrypt.Net.BCrypt.HashPassword("Test1234");
-            var existing = await conn.QueryFirstOrDefaultAsync<int?>(
-                "SELECT IdUser FROM Users WHERE Email = @Email", new { d.Email });
-
-            if (existing == null)
-            {
-                await conn.ExecuteAsync(@"
-                    INSERT INTO Users (Username, FirstName, LastName, Email, Password,
-                                       IdRole, Active, IsVerified, CreationDate)
-                    VALUES (@Username, @First, @Last, @Email, @Password,
-                            @IdRole, 1, 1, CONVERT(NVARCHAR(50), GETDATE(), 120));",
-                    new { d.Username, d.First, d.Last, d.Email, Password = hash, d.IdRole });
-            }
-            else
-            {
-                await conn.ExecuteAsync(@"
-                    UPDATE Users
-                       SET Password = @Password, Active = 1, IsVerified = 1
-                     WHERE Email = @Email;",
-                    new { d.Email, Password = hash });
-            }
-        }
-    }
 }
+} 

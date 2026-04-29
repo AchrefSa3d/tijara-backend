@@ -290,6 +290,20 @@ public class DeliveriesController : ControllerBase
         }
     }
 
+    // GET /api/deliveries/:orderId (from stashed version)
+    [HttpGet("order/{orderId:long}")]
+    public async Task<IActionResult> GetByOrder(long orderId)
+    {
+        var delivery = await _db.QueryFirstOrDefaultAsync<dynamic>(@"
+            SELECT d.*, t.Name AS TransportName, t.Price AS TransportPrice
+            FROM Deliveries d
+            LEFT JOIN Transports t ON d.IdTransport = t.IdTransport
+            WHERE d.IdOrder = @OrderId",
+            new { OrderId = orderId });
+        if (delivery == null) return NotFound(new { message = "Livraison introuvable." });
+        return Ok(delivery);
+    }
+
     // ─────────────────────────────────────────────────────────────
     // Helpers — read JSON values regardless of casing
     // ─────────────────────────────────────────────────────────────

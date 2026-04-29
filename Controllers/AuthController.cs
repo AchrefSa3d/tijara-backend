@@ -456,7 +456,11 @@ public class AuthController : ControllerBase
         return Ok(new { message = "Mot de passe réinitialisé.", email, password = req.NewPassword });
     }
 
-    public record DevResetRequest(string Email, string NewPassword);
+    public class DevResetRequest 
+{ 
+    public string Email { get; set; } = "";
+    public string NewPassword { get; set; } = "";
+}
 
     // ─── Helpers ─────────────────────────────────────────────
     internal static string MapRole(int idRole) => idRole switch
